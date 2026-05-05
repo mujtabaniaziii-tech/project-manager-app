@@ -6,6 +6,54 @@ import requests
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Project Manager Pro", page_icon="🚀", layout="wide")
 
+# --- CUSTOM UI (Glassmorphism & Animated BG) ---
+def inject_custom_css():
+    st.markdown("""
+    <style>
+    /* Animated Moving Background */
+    .stApp {
+        background: linear-gradient(-45deg, #1e3b2b, #0d1a12, #2c523d, #000000);
+        background-size: 400% 400%;
+        animation: gradientBG 15s ease infinite;
+    }
+    
+    @keyframes gradientBG {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+
+    /* Glassmorphism Effect for Forms (Login/Signup/Add Project) */
+    div[data-testid="stForm"] {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 30px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+    }
+    
+    /* Neon Green Button Styling */
+    div[data-testid="stForm"] button {
+        background-color: #7ce38b !important;
+        color: #000000 !important;
+        border-radius: 10px !important;
+        font-weight: bold !important;
+        border: none !important;
+        transition: 0.3s !important;
+    }
+    
+    div[data-testid="stForm"] button:hover {
+        box-shadow: 0 0 15px #7ce38b !important;
+        transform: scale(1.02);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# CSS ko apply karein
+inject_custom_css()
+
 # --- INITIALIZE DATABASE ---
 db.init_db()
 
@@ -15,7 +63,7 @@ if "logged_in" not in st.session_state:
     st.session_state.user_id = None
     st.session_state.username = ""
 
-# --- GITHUB API FUNCTIONS (Ab yeh user ka apna token lenge) ---
+# --- GITHUB API FUNCTIONS ---
 def fetch_recent_github_repos(token):
     if not token:
         return None, "GitHub Token missing! Please add it in Settings."
@@ -117,7 +165,7 @@ def main_dashboard():
             df_chart = pd.DataFrame(list(task_stats.items()), columns=["Status", "Count"])
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
-                st.bar_chart(df_chart.set_index("Status"), color="#3498db")
+                st.bar_chart(df_chart.set_index("Status"), color="#7ce38b")
             with chart_col2:
                 st.dataframe(df_chart, hide_index=True, use_container_width=True)
         else:
