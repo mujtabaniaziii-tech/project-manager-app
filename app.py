@@ -2,11 +2,6 @@ import streamlit as st
 import pandas as pd
 import database as db
 import requests
-import os
-from dotenv import load_dotenv
-
-# --- LOAD ENVIRONMENT VARIABLES ---
-load_dotenv()
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Project Manager Pro", page_icon="🚀", layout="wide")
@@ -17,16 +12,16 @@ db.init_db()
 # --- INITIALIZE SESSION STATE ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+    st.session_state.user_id = None
+    st.session_state.username = ""
 
-# --- GITHUB API FUNCTIONS ---
-def fetch_recent_github_repos():
-    token = os.getenv("GITHUB_TOKEN")
+# --- GITHUB API FUNCTIONS (Ab yeh user ka apna token lenge) ---
+def fetch_recent_github_repos(token):
     if not token:
-        return None, "GitHub Token missing in .env file!"
+        return None, "GitHub Token missing! Please add it in Settings."
         
     headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
     url = "https://api.github.com/user/repos?sort=updated&per_page=5"
-    
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
@@ -36,15 +31,11 @@ def fetch_recent_github_repos():
     except Exception as e:
         return None, f"Connection Error: {str(e)}"
 
-# NAYA FUNCTION: Commits fetch karne ke liye
-def fetch_recent_commits(repo_full_name):
-    token = os.getenv("GITHUB_TOKEN")
+def fetch_recent_commits(repo_full_name, token):
     if not token:
         return []
-        
     headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-    url = f"https://api.github.com/repos/{repo_full_name}/commits?per_page=3" # Sirf aakhri 3 commits
-    
+    url = f"https://api.github.com/repos/{repo_full_name}/commits?per_page=3"
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
@@ -53,50 +44,70 @@ def fetch_recent_commits(repo_full_name):
     except:
         return []
 
-# --- LOGIN FUNCTION ---
-def login():
-    st.title("🔐 Login to Project Manager")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
-        
-        if submit:
-            if username == "admin" and password == "1234":
-                st.session_state.logged_in = True
-                st.success("Logged in successfully!")
-                st.rerun()
-            else:
-                st.error("Invalid credentials (Hint: admin/1234)")
-
-# --- LOGOUT FUNCTION ---
-def logout():
-    st.session_state.logged_in = False
-    st.rerun()
+# --- AUTHENTICATION (Login / Sign Up) ---
+def auth_screen():
+    st.title("🔐 Project Manager Pro")
+    
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+    
+    with tab1:
+        st.subheader("Login to your account")
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit_login = st.form_submit_button("Login")
+            
+            if submit_login:
+                user = db.login_user(username, password)
+                if user:
+                    st.session_state.logged_in = True
+                    st.session_state.user_id = user[0]
+                    st.session_state.username = user[1]
+                    st.success("Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.error("Invalid Username or Password.")
+                    
+    with tab2:
+        st.subheader("Create a new account")
+        with st.form("signup_form"):
+            new_username = st.text_input("Choose a Username")
+            new_password = st.text_input("Choose a Password", type="password")
+            submit_signup = st.form_submit_button("Sign Up")
+            
+            if submit_signup:
+                if new_username and len(new_password) >= 4:
+                    if db.add_user(new_username, new_password):
+                        st.success("Account created successfully! You can now login.")
+                    else:
+                        st.error("Username already exists! Choose another one.")
+                else:
+                    st.warning("Please provide a username and a password (min 4 chars).")
 
 # --- MAIN APP UI ---
 def main_dashboard():
     st.sidebar.title("🛠 Project Manager")
-    st.sidebar.write(f"Logged in as: **Admin**")
+    st.sidebar.write(f"Welcome, **{st.session_state.username}** 👋")
     
-    page = st.sidebar.radio("Go to", ["🏠 Dashboard", "📂 My Projects", "⚙️ Settings"])
+    page = st.sidebar.radio("Navigation", ["🏠 Dashboard", "📂 My Projects", "⚙️ Settings"])
     
     if st.sidebar.button("Logout"):
-        logout()
+        st.session_state.logged_in = False
+        st.session_state.user_id = None
+        st.session_state.username = ""
+        st.rerun()
 
     # --- DASHBOARD PAGE ---
     if page == "🏠 Dashboard":
-        st.header("Welcome back, Mujtaba! 🚀")
-        st.write("Here is the live overview of your local projects and GitHub activity.")
+        st.header(f"Welcome back, {st.session_state.username}! 🚀")
         
-        projects = db.view_all_projects()
-        total_projects = len(projects)
-        task_stats = db.get_task_stats()
+        projects = db.view_all_projects(st.session_state.user_id)
+        task_stats = db.get_task_stats(st.session_state.user_id)
         pending_tasks = task_stats.get("To-Do", 0) + task_stats.get("In-Progress", 0)
         
         col1, col2, col3 = st.columns(3)
-        col1.metric("Local Active Projects", total_projects)
-        col2.metric("Pending Tasks", pending_tasks) 
+        col1.metric("Your Active Projects", len(projects))
+        col2.metric("Your Pending Tasks", pending_tasks) 
         col3.metric("System Status", "Online 🟢") 
         
         st.divider()
@@ -106,47 +117,40 @@ def main_dashboard():
             df_chart = pd.DataFrame(list(task_stats.items()), columns=["Status", "Count"])
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
-                st.write("**Tasks by Status**")
                 st.bar_chart(df_chart.set_index("Status"), color="#3498db")
             with chart_col2:
-                st.write("**Quick Breakdown**")
                 st.dataframe(df_chart, hide_index=True, use_container_width=True)
         else:
-            st.info("No tasks added yet. Add tasks in 'My Projects' to see analytics here!")
+            st.info("No tasks added yet. Add tasks in 'My Projects'!")
             
         st.divider()
         
-        # --- GITHUB LIVE FEED (UPDATED WITH COMMITS) ---
-        st.subheader("🐙 Recent GitHub Activity")
+        st.subheader("🐙 Your Recent GitHub Activity")
+        user_token = db.get_github_token(st.session_state.user_id)
         
-        with st.spinner("Fetching live data and commits from GitHub..."):
-            repos, error = fetch_recent_github_repos()
-            
-            if error:
-                st.error(error)
-            elif repos:
-                st.success("GitHub Connection Successful!")
-                for repo in repos:
-                    # Har repo ke liye ek box banayenge
-                    with st.expander(f"📦 {repo.get('name')} (Updated: {repo.get('updated_at').split('T')[0]})", expanded=True):
-                        repo_url = repo.get("html_url", "#")
-                        repo_full_name = repo.get("full_name") # Owner/Repo name needed for commits
-                        
-                        st.markdown(f"**[Open Repository on GitHub]({repo_url})**")
-                        
-                        # Commits fetch karna
-                        commits = fetch_recent_commits(repo_full_name)
-                        if commits:
-                            st.write("*Recent Commits:*")
-                            for commit in commits:
-                                msg = commit.get("commit", {}).get("message", "No message")
-                                date = commit.get("commit", {}).get("author", {}).get("date", "").split("T")[0]
-                                # Agar message bohot lamba ho toh usko chota kar diya
-                                st.caption(f"🔧 `{date}`: {msg[:80]}...")
-                        else:
-                            st.caption("No recent commits found or repository is empty.")
-            else:
-                st.info("No repositories found on your GitHub account.")
+        if not user_token:
+            st.warning("⚠️ You haven't added your GitHub Token yet. Go to **Settings** to add it.")
+        else:
+            with st.spinner("Fetching your live data from GitHub..."):
+                repos, error = fetch_recent_github_repos(user_token)
+                
+                if error:
+                    st.error(error)
+                elif repos:
+                    for repo in repos:
+                        with st.expander(f"📦 {repo.get('name')} (Updated: {repo.get('updated_at').split('T')[0]})"):
+                            repo_url = repo.get("html_url", "#")
+                            repo_full_name = repo.get("full_name")
+                            st.markdown(f"**[Open Repository]({repo_url})**")
+                            
+                            commits = fetch_recent_commits(repo_full_name, user_token)
+                            if commits:
+                                for commit in commits:
+                                    msg = commit.get("commit", {}).get("message", "No message")
+                                    date = commit.get("commit", {}).get("author", {}).get("date", "").split("T")[0]
+                                    st.caption(f"🔧 `{date}`: {msg[:80]}...")
+                else:
+                    st.info("No repositories found.")
         
     # --- MY PROJECTS PAGE ---
     elif page == "📂 My Projects":
@@ -157,81 +161,58 @@ def main_dashboard():
                 p_name = st.text_input("Project Name")
                 p_desc = st.text_area("Description")
                 p_status = st.selectbox("Status", ["Active", "On Hold", "Completed"])
-                submit_project = st.form_submit_button("Save Project")
-                
-                if submit_project:
-                    if p_name:
-                        db.add_project(p_name, p_desc, p_status)
-                        st.success(f"Project '{p_name}' added to database!")
-                        st.rerun() 
-                    else:
-                        st.error("Project Name is required.")
+                if st.form_submit_button("Save Project") and p_name:
+                    db.add_project(st.session_state.user_id, p_name, p_desc, p_status)
+                    st.success("Project added!")
+                    st.rerun()
 
         st.divider()
-
-        st.subheader("Current Projects")
-        projects = db.view_all_projects()
+        projects = db.view_all_projects(st.session_state.user_id)
         
         if projects:
             df = pd.DataFrame(projects, columns=["ID", "Project Name", "Description", "Status"])
             st.dataframe(df, hide_index=True, use_container_width=True)
             
-            st.divider()
-            
-            st.subheader("🗑️ Delete a Project")
             project_options = {f"ID: {p[0]} - {p[1]}": p[0] for p in projects}
-            
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                selected_project_to_delete = st.selectbox("Select a project to delete:", list(project_options.keys()))
-            with col2:
-                st.write("") 
-                st.write("")
-                if st.button("Delete Project", type="primary"):
-                    project_id_to_delete = project_options[selected_project_to_delete]
-                    db.delete_project(project_id_to_delete)
-                    st.success("Project deleted successfully!")
-                    st.rerun() 
-                    
-            st.divider()
-            
-            st.subheader("📝 Manage Project Tasks")
-            selected_project_for_tasks = st.selectbox("Select Project to view/add tasks:", list(project_options.keys()), key="task_project_select")
+            selected_project_for_tasks = st.selectbox("Select Project to manage tasks:", list(project_options.keys()))
             selected_project_id = project_options[selected_project_for_tasks]
 
-            col3, col4 = st.columns([1, 2])
-            with col3:
+            col1, col2 = st.columns([1, 2])
+            with col1:
                 with st.form("add_task_form", clear_on_submit=True):
                     task_name = st.text_input("New Task Name")
                     task_status = st.selectbox("Task Status", ["To-Do", "In-Progress", "Done"])
-                    submit_task = st.form_submit_button("Add Task")
-                    
-                    if submit_task:
-                        if task_name:
-                            db.add_task(selected_project_id, task_name, task_status)
-                            st.success("Task Added!")
-                            st.rerun()
-                        else:
-                            st.error("Task name cannot be empty.")
+                    if st.form_submit_button("Add Task") and task_name:
+                        db.add_task(selected_project_id, task_name, task_status)
+                        st.success("Task Added!")
+                        st.rerun()
 
-            with col4:
+            with col2:
                 tasks = db.view_tasks_by_project(selected_project_id)
                 if tasks:
                     df_tasks = pd.DataFrame(tasks, columns=["Task ID", "Project ID", "Task Name", "Status"])
                     st.dataframe(df_tasks.drop(columns=["Project ID"]), hide_index=True, use_container_width=True)
                 else:
-                    st.info("No tasks yet for this project. Add one from the left!")
-
-        else:
-            st.info("No projects found. Create your first project above!")
+                    st.info("No tasks for this project yet.")
 
     # --- SETTINGS PAGE ---
     elif page == "⚙️ Settings":
-        st.header("⚙️ Settings")
-        st.info("Update your environment variables in the `.env` file to change GitHub settings.")
+        st.header("⚙️ Account Settings")
+        st.write("Manage your API keys here.")
+        
+        current_token = db.get_github_token(st.session_state.user_id)
+        
+        with st.form("token_form"):
+            new_token = st.text_input("GitHub Personal Access Token", value=current_token if current_token else "", type="password")
+            st.caption("Don't worry, this token is saved securely in your personal account.")
+            
+            if st.form_submit_button("Save Token"):
+                db.update_github_token(st.session_state.user_id, new_token)
+                st.success("GitHub Token updated successfully!")
+                st.rerun()
 
 # --- APP EXECUTION ---
 if not st.session_state.logged_in:
-    login()
+    auth_screen()
 else:
     main_dashboard()
